@@ -26,13 +26,26 @@ from utils import MainLogger
 FLAGS = gflags.FLAGS
 
 
+def presets():
+    if FLAGS.preset is not None:
+        if FLAGS.preset == "demo":
+            FLAGS.batch_size = 100
+            FLAGS.input_dim = 100
+            FLAGS.hidden_dim = 100
+            FLAGS.embedding_path = os.path.expanduser("~/data/glove.6B.100d.txt")
+
+
 def args():
 
     default_experiment_name = "exp-{}".format(int(time.time()))
 
+    gflags.DEFINE_enum("preset", None, ["demo"], "Easily set configuration.")
     gflags.DEFINE_string("data_path", os.path.expanduser("~/data/multinli_0.9/multinli_0.9_dev_matched.jsonl"), "Path to NLI data.")
     gflags.DEFINE_string("eval_data_path", os.path.expanduser("~/data/multinli_0.9/multinli_0.9_dev_matched.jsonl"), "Path to NLI data.")
-    gflags.DEFINE_string("embedding_path", os.path.expanduser("~/data/glove.6B.50d.txt"), "Path to GloVe vectors.")
+    gflags.DEFINE_string("embedding_path", os.path.expanduser("~/data/glove.840B.300d.txt"), "Path to GloVe vectors.")
+    gflags.DEFINE_integer("batch_size", 100, "Batch size.")
+    gflags.DEFINE_integer("input_dim", 300, "Word embedding dimension.")
+    gflags.DEFINE_integer("hidden_dim", 300, "Hidden representation dimension.")
     gflags.DEFINE_string("save_path", ".", "Path to logs and checkpoints.")
     gflags.DEFINE_string("load_path", None, "Path to load checkpoint.")
     gflags.DEFINE_string("log_path", None, "Path to log.")
@@ -42,6 +55,8 @@ def args():
     gflags.DEFINE_integer("seed", 11, "Random seed.")
 
     FLAGS(sys.argv)
+
+    presets()
 
     if not FLAGS.load_path:
         FLAGS.load_path = FLAGS.save_path  # this way we use logs/ckpt for an experiment_name if it exists.
@@ -54,9 +69,9 @@ def args():
 
 
 def run():
-    model = GRU()
+    model = GRU(FLAGS.input_dim, FLAGS.hidden_dim)
     print(model)
-    optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08)
+    optimizer = optim.SGD(model.parameters(), lr=0.001)
 
     data_paths = [FLAGS.data_path, FLAGS.eval_data_path]
 
@@ -132,7 +147,7 @@ class Dataset(object):
 
 
 def evaluate(model, eval_data, embeddings):
-    batch_size = 10
+    batch_size = FLAGS.batch_size
 
     n_correct = 0.
     n_total = 0
@@ -166,8 +181,8 @@ def evaluate(model, eval_data, embeddings):
 
 
 def train(model, optimizer, training_data, embeddings, eval_fn, ckpt_fn, train_args):
-    batch_size = 10
-    eval_every = 20
+    batch_size = FLAGS.batch_size
+    eval_every = 100
     log_every = 20
     ckpt_step = 10000
 
@@ -217,11 +232,11 @@ def train(model, optimizer, training_data, embeddings, eval_fn, ckpt_fn, train_a
 
 
 class GRU(nn.Module):
-    def __init__(self):
+    def __init__(self, input_dim, hidden_dim):
         super(GRU, self).__init__()
 
-        self.input_dim = 50
-        self.hidden_dim = 50
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
         self.num_layers = 1
         
         # self.transform = nn.Linear(50, 50)
@@ -229,7 +244,7 @@ class GRU(nn.Module):
         self.fc1 = nn.Linear(2 * self.hidden_dim * self.num_layers, 1024)
         self.fc2 = nn.Linear(1024, 1024)
         self.fc3 = nn.Linear(1024, 3)
-        self.dropout_rate = 0.2
+        self.dropout_rate = 0.5
 
         for w in self.parameters():
             if len(w.size()) == 2:
@@ -241,7 +256,7 @@ class GRU(nn.Module):
         batch_size = x.size(0) // 2
         seq_length = x.size(1)
 
-        h0 = Variable(torch.zeros(batch_size, self.num_layers, self.hidden_dim))
+        h0 = Variable(torch.zeros(batch_size, self.num_layers, self.hidden_dim), volatile=not self.training)
         outp, hn = self.rnn(x, h0)
 
         hn = hn.transpose(0, 1).view(2 * batch_size, self.num_layers * self.hidden_dim)
